@@ -1,22 +1,19 @@
 /* 
  * File:   uart.h
- * Author: MARIA DE LOS ANGELES
+ * Author: María De Los Ángeles Castillo 
  *
- * Created on 21 de mayo de 2026, 17:10
+ * Created on 25 de mayo de 2026, 07:06 PM
  */
+
 #ifndef UART_H
-#define UART_H
+#define	UART_H
 
-#define _XTAL_FREQ  8000000UL
-#define BAUD_RATE   9600
+#include <xc.h>
+#include "config.h"
 
+void Uart_Init(unsigned long baud);
+void Uart_Send_Char(char txData);
+void Uart_Send_String(char *info);
 
-void UART_Init(void);
-void UART_SendChar(char c);
-void UART_SendString(const char *str);
-void UART_SendUInt(unsigned int valor);
-void UART_SendDecimal(unsigned int entero, unsigned int decimal);
-char UART_ReadChar(void);
-unsigned char UART_DataReady(void);
+#endif	/* UART_H */
 
-#endif
