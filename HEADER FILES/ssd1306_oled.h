@@ -1,8 +1,8 @@
 /* 
  * File:   ssd1306_oled.h
- * Author: MARIA DE LOS ANGELES
+ * Author: María De Los Ángeles Castillo 
  *
- * Created on 21 de mayo de 2026, 16:53
+ * Created on 18 de abril de 2026, 01:51 PM
  */
 
 #include <xc.h>
@@ -98,6 +98,8 @@ typedef struct _Current_Font_s
 #define SSD1306_SET_VCOM_DESELECT                       0xDB
 
 void OLED_Init(void);
+void OLED_DisplayOff(void);
+void OLED_DisplayOn(void);
 uint8_t OLED_Width(void);
 uint8_t OLED_Height(void);
 void OLED_Update(void);
@@ -118,3 +120,5 @@ void OLED_Circle(int16_t x_center, int16_t y_center, int16_t radius, uint8_t col
 void OLED_Image(const uint8_t *image);
 void OLED_Write(int16_t x, int16_t y, char value);
 void OLED_Write_Text(int16_t x, int16_t y, char *text);
+void OLED_Write_Text_Centered(uint8_t y, char *texto);
+void OLED_Texto_Parpadeo(char *texto, uint8_t y, uint8_t repeticiones);
