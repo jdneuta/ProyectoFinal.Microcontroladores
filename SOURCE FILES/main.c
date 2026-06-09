@@ -1,465 +1,253 @@
-#include "config.h"
+/*
+ * File:   main.c
+ * Author: María De Los Ángeles Castillo
+ *
+ * Example: PIC18F4550 + MAX30102 + DS18B20 + SSD1306 OLED + UART
+ */
+
 #include <xc.h>
-#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
 
+#include "config.h"
 #include "i2c.h"
-#include "uart.h"
-#include "sensores.h"
 #include "ssd1306_oled.h"
-// CONFIGURACIONES
-#define SAMPLE_PERIOD_MS      10
-#define FC_BUFFER_SIZE        100
-#define OLED_REFRESH_MS       500
+#include "sensores.h"
+#include "uart.h"
 
-#define FC_ALARMA_ALTA        100
-#define FC_ALARMA_BAJA        60
-
-#define FC_HISTERESIS_ALTA    95
-#define FC_HISTERESIS_BAJA    65
-
-// MACROS LEDs
-
-#define LEDS_INIT()           (TRISA &= 0b11100000)
-#define LEDS_OFF_ALL()        (LATA  &= 0b11100000)
-
-// ENUM DE ESTADOS
-typedef enum {
-    ESTADO_INIT = 0,
-    ESTADO_ESPERA,
-    ESTADO_MONITOREO,
-    ESTADO_ALARMA,
-    ESTADO_ERROR
-} EstadoSistema;
-
-// ESTRUCTURA PRINCIPAL
-typedef struct {
-
-    uint16_t bpm;
-    float temperatura;
-
-    uint8_t usuario_presente;
-
-    uint8_t alarma_fc;
-    uint8_t lectura_valida;
-
-} DatosVitales;
-
-// VARIABLES GLOBALES
-
-static EstadoSistema estado_actual = ESTADO_INIT;
-static DatosVitales sistema;
-
-// PROTOTIPOS
-
-static void Sistema_Init(void);
-static void ActualizarSensores(void);
-static void ProcesarDatos(void);
-static void ActualizarOLED(void);
-static void ActualizarUART(void);
-static void ActualizarLEDs(void);
-
-static void OLED_MostrarBienvenida(void);
-static void OLED_MostrarEspera(void);
-static void OLED_MostrarFC(void);
-static void OLED_MostrarError(void);
-
-// MAIN
-void main(void)
-{
-    Sistema_Init();
-
-    while(1)
-    {
-        ActualizarSensores();
-
-        ProcesarDatos();
-
-        ActualizarLEDs();
-
-        ActualizarOLED();
-
-        ActualizarUART();
-
-        __delay_ms(SAMPLE_PERIOD_MS);
-    }
-}
-
-// INICIALIZACIÓN
-
-static void Sistema_Init(void)
-{
-    LEDS_INIT();
-    LEDS_OFF_ALL();
-
-    LED_ENCENDIDO  =    ON;
-    LED_PREPARANDO = ON ;
-
-    UART_Init();
-
-    UART_SendString("\r\n=== MONITOR BIOMEDICO ===\r\n");
-    UART_SendString("Inicializando...\r\n");
-
-    I2C_Init_Master(I2C_100KHZ);
-
-    __delay_ms(50);
-
-    OLED_Init();
-
-    OLED_SetFont(FONT_1);
-
-    OLED_MostrarBienvenida();
-
-    UART_SendString("OLED OK\r\n");
-
+void main(void) {
     
-    // REINTENTOS SENSOR MAX30102
+    int16_t temp = 0;
+    int16_t entero = 0;
+    int16_t decimal = 0;
 
-    uint8_t intentos = 0;
-    uint8_t sensor_ok = 0;
+    char line[22];
+    char texto_temp[22];
+    char uart_text[60];
 
-    for(intentos = 0; intentos < 3; intentos++)
-    {
-        if(MAX30102_Init())
-        {
-            sensor_ok = 1;
-            break;
+    uint32_t red = 0;
+    uint32_t ir = 0;
+
+    uint8_t contador_temp = 0;
+    uint8_t bpm_send = 0;
+    uint8_t spo2_send = 0;
+    uint8_t alerta = 0;
+    uint8_t segundos_sin_reloj = 0;
+
+    MAX30102_Result_t result = {0};
+
+    // Oscilador interno a 8 MHz
+    OSCCON = 0x72;
+
+    // Todo digital
+    ADCON1 = 0x0F;
+    
+    // Inicializar LEDs
+    LEDs_Init();
+    LED_ENCENDIDO_LAT = 1;
+
+    // Pin del DS18B20 como entrada al inicio
+    DS18B20_LAT = 0;
+    DS18B20_TRIS = 1;
+    DS18B20_SetResolution(10);
+
+    // Inicializaciones
+    I2C_Init_Master(I2C_100KHZ);
+    Uart_Init(9600);
+    
+    INT2_Init();
+    
+    OLED_Init();
+    OLED_ClearDisplay();
+    OLED_SetFont(FONT_1);
+    
+    LEDs_Apagar_Estados();
+    LED_PREPARANDO_LAT = 1;
+
+    OLED_Write_Text_Centered(12, "MONIT SIGNOS VITALES");
+    OLED_Write_Text_Centered(24, "MAX + DS18B20 + UART");
+    OLED_Write_Text_Centered(36, "Encendiendo...");
+    OLED_Update();
+
+    Uart_Send_String("Encendiendo...\r\n");
+
+    __delay_ms(2000);
+
+    if(!MAX30102_Begin()) {
+        
+        LEDs_Apagar_Estados();
+        LED_ALERTA_LAT = 0;
+        LED_PREPARANDO_LAT = 1;
+        
+        OLED_ClearDisplay();
+        OLED_Write_Text_Centered(12, "MAX30102 ERROR");
+        OLED_Write_Text_Centered(24, "Revisa I2C");
+        OLED_Write_Text_Centered(36, "ADDR 0x57");
+        OLED_Update();
+        __delay_ms(1000);
+
+        while(1){Uart_Send_String("ERROR=MAX30102\r\n"); __delay_ms(3000);}  
+    }
+    
+    LEDs_Apagar_Estados();
+    LED_PREPARANDO_LAT = 1;
+    
+    OLED_ClearDisplay();
+    OLED_Write_Text_Centered(28, "Inicializando Sistema");
+    OLED_Update();
+
+    Uart_Send_String("Inicializando Sistema\r\n");
+
+    __delay_ms(3000);
+    
+    temp = DS18B20_ReadTempC_x100();
+    
+    LEDs_Apagar_Estados();
+    LED_FUNCIONAL_LAT = 1;
+
+    while(1) {
+        
+        // Leer muestras disponibles del MAX30102
+        while(MAX30102_GetAvailableSamples() > 0) {
+            
+            if(MAX30102_ReadFIFO(&red, &ir)) {
+                
+                MAX30102_ProcessSample(red, ir, &result);
+            }
         }
 
-        __delay_ms(200);
-    }
+        contador_temp++;
 
-    if(!sensor_ok)
-    {
-        estado_actual = ESTADO_ERROR;
+        if(contador_temp >= 3) {
+            contador_temp = 0;
+            temp = DS18B20_ReadTempC_x100();
+        }
 
-        UART_SendString("ERROR: MAX30102 no responde\r\n");
+        OLED_ClearDisplay();
+        
+        OLED_Write_Text_Centered(0,  "MONITOR");
+        OLED_Write_Text_Centered(12, "SIGNOS VITALES");
 
-        OLED_MostrarError();
+        // ==========================
+        // Temperatura
+        // ==========================
+        if(temp == 32767) {
+            
+            OLED_Write_Text_Centered(52, "Temp: Error");
+            sprintf(texto_temp, "Temp:ERR");
+        }
+        else {
+            
+            entero = temp / 100;
+            decimal = abs(temp % 100);
 
-        while(1)
-        {
-            LED_ALARMA = 1;
+            sprintf(texto_temp, "Temp:%d.%02d C", entero, decimal);
+            
+        }
+
+        // ==========================
+        // MAX30102 en OLED
+        // ==========================
+        if(!result.finger_detected) {
+            
+            OLED_ClearDisplay();
+            
+            LEDs_Apagar_Estados();
+            
+            LED_ESPERA_LAT = 1;
+            
+            OLED_Write_Text_Centered(0,  "MONITOR");
+            OLED_Write_Text_Centered(12, "SIGNOS VITALES");
+            OLED_Write_Text_Centered(30, "Ponte el reloj");
+            
+            bpm_send = 0;
+            spo2_send = 0;
+            
+            if(segundos_sin_reloj < TIEMPO_SLEEP_SIN_MANO) {
+                segundos_sin_reloj++;
+            }
+
+            if(segundos_sin_reloj >= TIEMPO_SLEEP_SIN_MANO) {
+                
+                Sistema_EntrarSleep();
+                LED_ESPERA_LAT = 1;
+
+                segundos_sin_reloj = 0;
+                temp = DS18B20_ReadTempC_x100();
+            }
+        }
+        else {
+            
+            segundos_sin_reloj = 0;
+            
+            LEDs_Apagar_Estados();
+            LED_FUNCIONAL_LAT = 1;
+            
+            bpm_send = result.bpm_valid ? result.bpm : 0;
+            spo2_send = result.spo2_valid ? result.spo2 : 0;
+
+            sprintf(line, "BPM:%u", bpm_send);
+            OLED_Write_Text_Centered(28, line);
+
+            sprintf(line, "SpO2:%u%%", spo2_send);
+            OLED_Write_Text_Centered(40, line);
+            
+            OLED_Write_Text_Centered(52, texto_temp);
+            
+        }
+        OLED_Update();
+        
+        // ==========================
+        // Comparar con rangos normales
+        // ==========================
+        alerta = Verificar_Rangos(temp, bpm_send, spo2_send, result.finger_detected);
+
+        if(alerta) {
+            
+            LED_ALERTA_LAT = 1;
+
+            OLED_Update();
+
+            OLED_InvertDisplay(1);
             __delay_ms(200);
-
-            LED_ALARMA = 0;
+            OLED_InvertDisplay(0);
             __delay_ms(200);
+            OLED_InvertDisplay(1);
+            __delay_ms(200);
+            OLED_InvertDisplay(0);
         }
-    }
-
-    UART_SendString("MAX30102 OK\r\n");
-
-    LED_PREPARANDO = 0;
-    LED_FUNCIONAL  = 1;
-
-    estado_actual = ESTADO_ESPERA;
-
-    UART_SendString("Sistema listo\r\n");
-}
-
-// ACTUALIZAR SENSORES
-
-static void ActualizarSensores(void)
-{
-    static uint8_t muestras = 0;
-
-    MAX30102_Sample muestra;
-    MAX30102_Result resultado;
-
-    sistema.usuario_presente = MAX30102_UsuarioDetectado();
-
-    if(!sistema.usuario_presente)
-    {
-        muestras = 0;
-
-        MAX30102_ClearFIFO();
-
-        estado_actual = ESTADO_ESPERA;
-
-        return;
-    }
-
-    if(MAX30102_ReadFIFO(&muestra))
-    {
-        muestras++;
-
-#ifdef DEBUG
-
-        UART_SendString("IR=");
-        UART_SendUInt((uint16_t)(muestra.ir >> 8));
-
-        UART_SendString(" RED=");
-        UART_SendUInt((uint16_t)(muestra.red >> 8));
-
-        UART_SendString("\r\n");
-
-#endif
-    }
-
-    if(muestras >= FC_BUFFER_SIZE)
-    {
-        muestras = 0;
-
-        resultado = MAX30102_CalcularFC();
-
-        sistema.lectura_valida = resultado.valid;
-
-        if(resultado.valid)
-        {
-            sistema.bpm = resultado.bpm;
+        else {
+            
+            LED_ALERTA_LAT = 0;
+            OLED_InvertDisplay(0);
         }
-    }
-}
-
-// PROCESAMIENTO
-static void ProcesarDatos(void)
-{
-    static uint8_t alarma_activa = 0;
-
-    if(!sistema.usuario_presente)
-    {
-        sistema.alarma_fc = 0;
-        return;
-    }
-
-    if(!sistema.lectura_valida)
-    {
-        estado_actual = ESTADO_ERROR;
-        return;
-    }
-
-    // HISTERESIS DE ALARMA
-
-    if(!alarma_activa)
-    {
-        if((sistema.bpm > FC_ALARMA_ALTA) ||
-           (sistema.bpm < FC_ALARMA_BAJA))
-        {
-            alarma_activa = 1;
+        
+        // ==========================
+        // Enviar por UART
+        // ==========================
+        if(temp == 32767) {
+            
+            sprintf(uart_text,
+                    "TEMP:0,BPM:%u,SPO2:%u,ALERTA:%u\r\n",
+                    bpm_send,
+                    spo2_send,
+                    alerta);
         }
-    }
-    else
-    {
-        if((sistema.bpm < FC_HISTERESIS_ALTA) &&
-           (sistema.bpm > FC_HISTERESIS_BAJA))
-        {
-            alarma_activa = 0;
+        
+        else {
+            
+            sprintf(uart_text,
+                    "TEMP:%d.%02d,BPM:%u,SPO2:%u,ALERTA:%u\r\n",
+                    entero,
+                    decimal,
+                    bpm_send,
+                    spo2_send,
+                    alerta);
         }
+
+        Uart_Send_String(uart_text);
+
+        __delay_ms(1000);
     }
-
-    sistema.alarma_fc = alarma_activa;
-
-    // --------------------------------------------------------
-
-    if(sistema.alarma_fc)
-    {
-        estado_actual = ESTADO_ALARMA;
-    }
-    else
-    {
-        estado_actual = ESTADO_MONITOREO;
-    }
-}
-
-// LEDs
-static void ActualizarLEDs(void)
-{
-    LEDS_OFF_ALL();
-
-    LED_ENCENDIDO = 1;
-
-    switch(estado_actual)
-    {
-        case ESTADO_ESPERA:
-
-            LED_EN_ESPERA = 1;
-
-        break;
-
-        case ESTADO_MONITOREO:
-
-            LED_FUNCIONAL = 1;
-
-        break;
-
-        case ESTADO_ALARMA:
-
-            LED_ALARMA = 1;
-
-        break;
-
-        case ESTADO_ERROR:
-
-            LED_ALARMA = 1;
-
-        break;
-
-        default:
-        break;
-    }
-}
-
-// OLED
-static void ActualizarOLED(void)
-{
-    static EstadoSistema ultimo_estado = 255;
-    static uint16_t ultimo_bpm = 0;
-
-    if((ultimo_estado == estado_actual) &&
-       (ultimo_bpm == sistema.bpm))
-    {
-        return;
-    }
-
-    ultimo_estado = estado_actual;
-    ultimo_bpm    = sistema.bpm;
-
-    switch(estado_actual)
-    {
-        case ESTADO_ESPERA:
-
-            OLED_MostrarEspera();
-
-        break;
-
-        case ESTADO_MONITOREO:
-        case ESTADO_ALARMA:
-
-            OLED_MostrarFC();
-
-        break;
-
-        case ESTADO_ERROR:
-
-            OLED_MostrarError();
-
-        break;
-
-        default:
-        break;
-    }
-}
-
-// UART
-static void ActualizarUART(void)
-{
-    static uint16_t ultimo_bpm_uart = 0;
-
-    if(ultimo_bpm_uart == sistema.bpm)
-    {
-        return;
-    }
-
-    ultimo_bpm_uart = sistema.bpm;
-
-    if(estado_actual == ESTADO_ESPERA)
-    {
-        UART_SendString("Esperando usuario...\r\n");
-        return;
-    }
-
-    if(!sistema.lectura_valida)
-    {
-        UART_SendString("Lectura invalida\r\n");
-        return;
-    }
-
-    UART_SendString("FC=");
-    UART_SendUInt(sistema.bpm);
-    UART_SendString(" bpm");
-
-    if(sistema.alarma_fc)
-    {
-        UART_SendString(" | ALERTA");
-    }
-    else
-    {
-        UART_SendString(" | NORMAL");
-    }
-
-    UART_SendString("\r\n");
-}
-
-// PANTALLAS OLED
-static void OLED_MostrarBienvenida(void)
-{
-    OLED_ClearDisplay();
-
-    OLED_SetFont(FONT_2);
-    OLED_Write_Text(10,10,"Monitor FC");
-
-    OLED_SetFont(FONT_1);
-    OLED_Write_Text(15,35,"PIC18F4550");
-
-    OLED_Write_Text(20,50,"Iniciando...");
-
-    OLED_Update();
-}
-
-static void OLED_MostrarEspera(void)
-{
-    OLED_ClearDisplay();
-
-    OLED_SetFont(FONT_2);
-    OLED_Write_Text(5,10,"En espera");
-
-    OLED_SetFont(FONT_1);
-    OLED_Write_Text(5,35,"Coloque dedo");
-
-    OLED_Update();
-}
-
-static void OLED_MostrarFC(void)
-{
-    char buffer[20];
-
-    OLED_ClearDisplay();
-
-    OLED_SetFont(FONT_1);
-
-    OLED_Write_Text(0,0,"Frecuencia");
-
-    OLED_H_Line(0,127,12,WHITE);
-
-    OLED_SetFont(FONT_3);
-
-    sprintf(buffer,"%3u",(unsigned int)sistema.bpm);
-
-    OLED_Write_Text(20,20,buffer);
-
-    OLED_SetFont(FONT_1);
-
-    OLED_Write_Text(85,30,"bpm");
-
-    if(sistema.alarma_fc)
-    {
-        OLED_FillRectangle(0,48,127,63,WHITE);
-
-        OLED_InvertFont(1);
-
-        OLED_Write_Text(15,50,"FUERA DE RANGO");
-
-        OLED_InvertFont(0);
-    }
-    else
-    {
-        OLED_Write_Text(40,50,"NORMAL");
-    }
-
-    OLED_Update();
-}
-
-static void OLED_MostrarError(void)
-{
-    OLED_ClearDisplay();
-
-    OLED_SetFont(FONT_2);
-
-    OLED_Write_Text(20,15,"ERROR");
-
-    OLED_SetFont(FONT_1);
-
-    OLED_Write_Text(5,40,"Lectura invalida");
-
-    OLED_Update();
 }
