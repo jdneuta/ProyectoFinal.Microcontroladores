@@ -1,86 +1,29 @@
-#include <xc.h>
-#include "config.h"
 #include "uart.h"
 
-void UART_Init(void) {
-
-    TRISCbits.TRISC6 = 0;   // TX ? salida
-    TRISCbits.TRISC7 = 1;   // RX ? entrada
-
-    // --- Registro TXSTA: Transmit Status & Control ---
-    TXSTA = 0x00;
-    TXSTAbits.BRGH  = 1;    // Alta velocidad (BRGH=1)
-    TXSTAbits.SYNC  = 0;    // Modo asíncrono
-    TXSTAbits.TXEN  = 1;    // Habilitar transmisor
-
-    // --- Registro RCSTA: Receive Status & Control ---
-    RCSTA = 0x00;
-    RCSTAbits.SPEN  = 1;    // Habilitar puerto serie (RC6/RC7)
-    RCSTAbits.CREN  = 1;    // Habilitar receptor continuo
-
-    // --- Baud Rate ---
-    // SPBRG = (Fosc / (16 * Baud)) - 1
-    SPBRG  = (unsigned char)(((_XTAL_FREQ / (16UL * BAUD_RATE))) - 1);
-    // Para 8 MHz / 9600 ? SPBRG = 51
+void Uart_Init(unsigned long baud)                  // Inicialzia el modulo USART
+{
+    TRISCbits.RC6 = 0;                              // Pin TX como salida
+    TRISCbits.RC7 = 1;                              // Pin RX como entrada
+    TXSTA = 0x24;                                   // Habilita 5(TX),2(valocidad)
+    RCSTA = 0x90;                                   // Habilita 7(Serial),4(Continuo)
+    BAUDCON = 0x00;                                 // Limpia el registro de baudios
+    BAUDCONbits.BRG16 = 1;                          // Baudios a 16 bits
+    unsigned int vx = (_XTAL_FREQ/(baud*4))-1;      // Formula para que siempre este en 9600 B
+    SPBRG = vx & 0x00FF;                            // Carga los baudios de la parte baja
+    SPBRGH = vx >> 8;                               // Carga los baudios de la parte alta
 }
 
-//  Envía un byte
-void UART_SendChar(char c) {
-    while (!TXSTAbits.TRMT);    // Espera buffer TX vacío
-    TXREG = c;
+void Uart_Send_Char(char txData)         			// Funcion para transmitir caracteres
+{
+    while(TXSTAbits.TRMT == 0);                     //Espera que termine de enviar
+    TXREG = txData;                                 //Registro de TX 
 }
 
-//   Envía cadena terminada en '\0'
-void UART_SendString(const char *str) {
-    while (*str != '\0') {
-        UART_SendChar(*str);
-        str++;
+void Uart_Send_String(char *info)          			// Funcion para transmitir una cadena de caracteres
+{
+    while(*info)
+    {
+        Uart_Send_Char(*info++);
     }
 }
 
-// Convierte y envía entero sin signo
-void UART_SendUInt(unsigned int valor) {
-    char buffer[6];             // Máximo "65535\0"
-    unsigned char i = 0;
-    unsigned char inicio;
-
-    if (valor == 0) {
-        UART_SendChar('0');
-        return;
-    }
-
-    // Extraer dígitos en orden inverso
-    while (valor > 0) {
-        buffer[i++] = (char)((valor % 10) + '0');
-        valor /= 10;
-    }
-
-    // Enviar al revés (orden correcto)
-    while (i > 0) {
-        i--;
-        UART_SendChar(buffer[i]);
-    }
-}
-
-// Envía "entero.decimal"
-void UART_SendDecimal(unsigned int entero, unsigned int decimal) {
-    UART_SendUInt(entero);
-    UART_SendChar('.');
-    UART_SendUInt(decimal);
-}
-
-// Recibe un byte (bloqueante)
-char UART_ReadChar(void) {
-    // Limpiar errores de frame/overrun
-    if (RCSTAbits.FERR || RCSTAbits.OERR) {
-        RCSTAbits.CREN = 0;
-        RCSTAbits.CREN = 1;
-    }
-    while (!PIR1bits.RCIF);     // Esperar dato disponible
-    return RCREG;
-}
-
-// Retorna 1 si hay dato en buffer RX
-unsigned char UART_DataReady(void) {
-    return PIR1bits.RCIF;
-}
