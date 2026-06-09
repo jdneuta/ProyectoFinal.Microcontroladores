@@ -1,8 +1,8 @@
 /* 
  * File:   i2c.h
- * Author: MARIA DE LOS ANGELES
+ * Author: María De Los Ángeles Castillo 
  *
- * Created on 21 de mayo de 2026, 16:54
+ * Created on 18 de abril de 2026, 01:51 PM
  */
 
 #ifndef I2C_H
@@ -10,15 +10,14 @@
 
 #include <xc.h>
 
-#define TRIS_SCL TRISBbits.TRISB1           
-#define TRIS_SDA TRISBbits.TRISB0          
+#define TRIS_SCL TRISBbits.TRISB1
+#define TRIS_SDA TRISBbits.TRISB0
 
-#define I2C_100KHZ 0x80                     // Bus para 100 kHz
-#define I2C_400KHZ 0x00                     // Bus para 100 kHz
+#define I2C_100KHZ 0x80
+#define I2C_400KHZ 0x00
 
-#define I2C_MASTER_MODE                     // Habilita modo I2C 
-
-
+#define I2C_MASTER_MODE
+//#define I2C_SLAVE_MODE
 
 #ifdef I2C_MASTER_MODE
 void I2C_Init_Master(unsigned char sp_i2c);
@@ -42,4 +41,3 @@ short I2C_Error_Read(void);
 #endif
 
 #endif
-
